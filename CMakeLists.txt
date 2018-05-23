@@ -29,6 +29,7 @@
 # Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
 if (IOS)
     INCLUDE(CmakeLists_IOS.txt)
+    include_directories(/usr/local/include)
 endif()
 
 cmake_minimum_required(VERSION 2.8.7)
@@ -471,7 +472,6 @@ else()
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-strict-aliasing")
 
   option(NO_AES "Explicitly disable AES support" ${NO_AES})
-
   if(NO_AES)
     message(STATUS "AES support explicitly disabled")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DNO_AES")
@@ -496,6 +496,10 @@ else()
     endif()
   else()
     message(STATUS "AES support disabled")
+  endif()
+
+  if(IOS AND ARCH STREQUAL "x86_64")
+    set(ARCH_FLAG "-march=x86-64")
   endif()
 
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11 -D_GNU_SOURCE ${MINGW_FLAG} ${STATIC_ASSERT_FLAG} ${WARNINGS} ${C_WARNINGS} ${ARCH_FLAG} ${COVERAGE_FLAGS} ${PIC_FLAG}")
