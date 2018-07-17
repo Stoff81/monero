@@ -1,4 +1,4 @@
-# Copyright (c) 2014-2017, The Monero Project
+# Copyright (c) 2014-2018, The Monero Project
 #
 # All rights reserved.
 #
@@ -27,6 +27,14 @@
 # THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 # Parts of this file are originally copyright (c) 2012-2013 The Cryptonote developers
+list(INSERT CMAKE_MODULE_PATH 0
+  "${CMAKE_SOURCE_DIR}/cmake")
+include(CheckCCompilerFlag)
+include(CheckCXXCompilerFlag)
+include(CheckLinkerFlag)
+include(CheckLibraryExists)
+include(CheckFunctionExists)
+
 if (IOS)
     INCLUDE(CmakeLists_IOS.txt)
     include_directories(/usr/local/include)
@@ -48,6 +56,47 @@ function (die msg)
 
   message(FATAL_ERROR "${BoldRed}${msg}${ColourReset}")
 endfunction ()
+
+function (add_c_flag_if_supported flag var)
+  string(REPLACE "-" "_" supported ${flag}_c)
+  check_c_compiler_flag(${flag} ${supported})
+  if(${${supported}})
+    set(${var} "${${var}} ${flag}" PARENT_SCOPE)
+  endif()
+endfunction()
+
+function (add_cxx_flag_if_supported flag var)
+  string(REPLACE "-" "_" supported ${flag}_cxx)
+  check_cxx_compiler_flag(${flag} ${supported})
+  if(${${supported}})
+    set(${var} "${${var}} ${flag}" PARENT_SCOPE)
+  endif()
+endfunction()
+
+function (add_linker_flag_if_supported flag var)
+  string(REPLACE "-" "_" supported ${flag}_ld)
+  string(REPLACE "," "_" supported ${flag}_ld)
+  check_linker_flag(${flag} ${supported})
+  if(${${supported}})
+    set(${var} "${${var}} ${flag}" PARENT_SCOPE)
+  endif()
+endfunction()
+
+function (add_definition_if_function_found function var)
+  string(REPLACE "-" "_" supported ${function}_function)
+  check_function_exists(${function} ${supported})
+  if(${${supported}})
+    add_definitions("-D${var}")
+  endif()
+endfunction()
+
+function (add_definition_if_library_exists library function header var)
+  string(REPLACE "-" "_" supported ${function}_library)
+  check_library_exists(${library} ${function} ${header} ${supported})
+  if(${${supported}})
+    add_definitions("-D${var}")
+  endif()
+endfunction()
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -89,9 +138,24 @@ endif()
 
 if(ARCH_ID STREQUAL "ppc64le")
   set(PPC64LE 1)
+  set(PPC64   0)
+  set(PPC     0)
+
 endif()
 
-if(WIN32 OR ARM)
+if(ARCH_ID STREQUAL "powerpc64" OR ARCH_ID STREQUAL "ppc64")
+  set(PPC64LE 0)
+  set(PPC64   1)
+  set(PPC     0)
+endif()
+
+if(ARCH_ID STREQUAL "powerpc")
+  set(PPC64LE 0)
+  set(PPC64   0)
+  set(PPC     1)
+endif()
+
+if(WIN32 OR ARM OR PPC64LE OR PPC64 OR PPC)
   set(OPT_FLAGS_RELEASE "-O2")
 else()
   set(OPT_FLAGS_RELEASE "-Ofast")
@@ -188,7 +252,7 @@ endif()
 # elseif(CMAKE_SYSTEM_NAME MATCHES ".*BSDI.*")
 #   set(BSDI TRUE)
 
-include_directories(external/easylogging++ src contrib/epee/include external)
+include_directories(external/rapidjson/include external/easylogging++ src contrib/epee/include external)
 
 if(APPLE)
   include_directories(SYSTEM /usr/include/malloc)
@@ -211,11 +275,11 @@ endif()
 
 if (BUILD_SHARED_LIBS)
   message(STATUS "Building internal libraries with position independent code")
-  set(PIC_FLAG "-fPIC")
   add_definitions("-DBUILD_SHARED_LIBS")
 else()
   message(STATUS "Building internal libraries as static")
 endif()
+set(PIC_FLAG "-fPIC")
 
 if(MINGW)
   string(REGEX MATCH "^[^/]:/[^/]*" msys2_install_path "${CMAKE_C_COMPILER}")
@@ -250,7 +314,7 @@ if(SANITIZE)
 endif()
 
 # Set default blockchain storage location:
-# memory was the default in Cryptonote before Monero implimented LMDB, it still works but is unneccessary.
+# memory was the default in Cryptonote before Monero implemented LMDB, it still works but is unnecessary.
 # set(DATABASE memory)
 set(DATABASE lmdb)
 
@@ -364,17 +428,23 @@ if(STATIC AND NOT IOS)
   endif()
 endif()
 
+find_package(PCSC)
+
+add_definition_if_library_exists(c memset_s "string.h" HAVE_MEMSET_S)
+add_definition_if_library_exists(c explicit_bzero "strings.h" HAVE_EXPLICIT_BZERO)
+add_definition_if_function_found(strptime HAVE_STRPTIME)
+
 add_definitions(-DAUTO_INITIALIZE_EASYLOGGINGPP)
 
-add_subdirectory(external)
+# Generate header for embedded translations
+include(ExternalProject)
+ExternalProject_Add(generate_translations_header
+  SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/translations"
+  BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/translations"
+  INSTALL_COMMAND cmake -E echo "")
+include_directories("${CMAKE_CURRENT_BINARY_DIR}/translations")
 
-# Final setup for miniupnpc
-if(UPNP_STATIC OR IOS)
-  add_definitions("-DUPNP_STATIC")
-else()
-  add_definitions("-DUPNP_DYNAMIC")
-  include_directories(${UPNP_INCLUDE})
-endif()
+add_subdirectory(external)
 
 # Final setup for libunbound
 include_directories(${UNBOUND_INCLUDE})
@@ -396,6 +466,16 @@ endif()
 include_directories(${LIBUNWIND_INCLUDE})
 link_directories(${LIBUNWIND_LIBRARY_DIRS})
 
+# Final setup for libpcsc
+if (PCSC_FOUND) 
+  message(STATUS "Using PCSC include dir at ${PCSC_INCLUDE_DIR}")
+  add_definitions(-DHAVE_PCSC)
+  include_directories(${PCSC_INCLUDE_DIR})
+  link_directories(${LIBPCSC_LIBRARY_DIRS})
+else (PCSC_FOUND)
+  message(STATUS "Could not find PCSC")
+endif()
+
 if(MSVC)
   add_definitions("/bigobj /MP /W3 /GS- /D_CRT_SECURE_NO_WARNINGS /wd4996 /wd4345 /D_WIN32_WINNT=0x0600 /DWIN32_LEAN_AND_MEAN /DGTEST_HAS_TR1_TUPLE=0 /FIinline_c.h /D__SSE4_1__")
   # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /Dinline=__inline")
@@ -413,7 +493,11 @@ else()
   if(ARCH STREQUAL "default")
     set(ARCH_FLAG "")
   elseif(PPC64LE)
-    set(ARCH_FLAG "-mcpu=${ARCH}")
+    set(ARCH_FLAG "-mcpu=power8")
+  elseif(PPC64)
+    set(ARCH_FLAG "-mcpu=970")
+  elseif(PPC)
+    set(ARCH_FLAG "-mcpu=7400")
   elseif(IOS AND ARCH STREQUAL "arm64")
     message(STATUS "IOS: Changing arch from arm64 to armv8")
     set(ARCH_FLAG "-march=armv8")
@@ -471,17 +555,63 @@ else()
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-strict-aliasing")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-strict-aliasing")
 
+  # if those don't work for your compiler, single it out where appropriate
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    set(C_SECURITY_FLAGS "${C_SECURITY_FLAGS} -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=1")
+    set(CXX_SECURITY_FLAGS "${CXX_SECURITY_FLAGS} -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=1")
+  endif()
+
+  # warnings
+  add_c_flag_if_supported(-Wformat C_SECURITY_FLAGS)
+  add_cxx_flag_if_supported(-Wformat CXX_SECURITY_FLAGS)
+  add_c_flag_if_supported(-Wformat-security C_SECURITY_FLAGS)
+  add_cxx_flag_if_supported(-Wformat-security CXX_SECURITY_FLAGS)
+
+  # -fstack-protector
+  add_c_flag_if_supported(-fstack-protector C_SECURITY_FLAGS)
+  add_cxx_flag_if_supported(-fstack-protector CXX_SECURITY_FLAGS)
+  add_c_flag_if_supported(-fstack-protector-strong C_SECURITY_FLAGS)
+  add_cxx_flag_if_supported(-fstack-protector-strong CXX_SECURITY_FLAGS)
+
+  # linker
+  if (NOT WIN32)
+    # Windows binaries die on startup with PIE
+    add_linker_flag_if_supported(-pie LD_SECURITY_FLAGS)
+  endif()
+  add_linker_flag_if_supported(-Wl,-z,relro LD_SECURITY_FLAGS)
+  add_linker_flag_if_supported(-Wl,-z,now LD_SECURITY_FLAGS)
+  add_linker_flag_if_supported(-Wl,-z,noexecstack noexecstack_SUPPORTED)
+  if (noexecstack_SUPPORTED)
+    set(LD_SECURITY_FLAGS "${LD_SECURITY_FLAGS} -Wl,-z,noexecstack")
+    set(LD_RAW_FLAGS ${LD_RAW_FLAGS} -z noexecstack)
+  endif()
+  add_linker_flag_if_supported(-Wl,-z,noexecheap noexecheap_SUPPORTED)
+  if (noexecheap_SUPPORTED)
+    set(LD_SECURITY_FLAGS "${LD_SECURITY_FLAGS} -Wl,-z,noexecheap")
+    set(LD_RAW_FLAGS ${LD_RAW_FLAGS} -z noexecheap)
+  endif()
+
+  # some windows linker bits
+  if (WIN32)
+    add_linker_flag_if_supported(-Wl,--dynamicbase LD_SECURITY_FLAGS)
+    add_linker_flag_if_supported(-Wl,--nxcompat LD_SECURITY_FLAGS)
+  endif()
+
+  message(STATUS "Using C security hardening flags: ${C_SECURITY_FLAGS}")
+  message(STATUS "Using C++ security hardening flags: ${CXX_SECURITY_FLAGS}")
+  message(STATUS "Using linker security hardening flags: ${LD_SECURITY_FLAGS}")
+
   option(NO_AES "Explicitly disable AES support" ${NO_AES})
   if(NO_AES)
     message(STATUS "AES support explicitly disabled")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DNO_AES")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNO_AES")
-  elseif(NOT ARM AND NOT PPC64LE)
+  elseif(NOT ARM AND NOT PPC64LE AND NOT PPC64 AND NOT PPC)
     message(STATUS "AES support enabled")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -maes")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -maes")
-  elseif(PPC64LE)
-    message(STATUS "AES support not available on ppc64le")
+  elseif(PPC64LE OR PPC64 OR PPC)
+    message(STATUS "AES support not available on POWER")
   elseif(ARM6)
     message(STATUS "AES support not available on ARMv6")
   elseif(ARM7)
@@ -502,8 +632,10 @@ else()
     set(ARCH_FLAG "-march=x86-64")
   endif()
 
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11 -D_GNU_SOURCE ${MINGW_FLAG} ${STATIC_ASSERT_FLAG} ${WARNINGS} ${C_WARNINGS} ${ARCH_FLAG} ${COVERAGE_FLAGS} ${PIC_FLAG}")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D_GNU_SOURCE ${MINGW_FLAG} ${STATIC_ASSERT_CPP_FLAG} ${WARNINGS} ${CXX_WARNINGS} ${ARCH_FLAG} ${COVERAGE_FLAGS} ${PIC_FLAG}")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11 -D_GNU_SOURCE ${MINGW_FLAG} ${STATIC_ASSERT_FLAG} ${WARNINGS} ${C_WARNINGS} ${ARCH_FLAG} ${COVERAGE_FLAGS} ${PIC_FLAG} ${C_SECURITY_FLAGS}")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -D_GNU_SOURCE ${MINGW_FLAG} ${STATIC_ASSERT_CPP_FLAG} ${WARNINGS} ${CXX_WARNINGS} ${ARCH_FLAG} ${COVERAGE_FLAGS} ${PIC_FLAG} ${CXX_SECURITY_FLAGS}")
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${LD_SECURITY_FLAGS}")
+
 
   # With GCC 6.1.1 the compiled binary malfunctions due to aliasing. Until that
   # is fixed in the code (Issue #847), force compiler to be conservative.
@@ -590,6 +722,7 @@ else()
   if(ANDROID AND NOT BUILD_GUI_DEPS STREQUAL "ON" OR IOS)
     #From Android 5: "only position independent executables (PIE) are supported" 
     message(STATUS "Enabling PIE executable")
+    set(PIC_FLAG "")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIE")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIE")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_CXX_FLAGS} -fPIE -pie")
@@ -669,14 +802,14 @@ if(STATIC)
   set(Boost_USE_STATIC_LIBS ON)
   set(Boost_USE_STATIC_RUNTIME ON)
 endif()
-find_package(Boost 1.58 QUIET REQUIRED COMPONENTS system filesystem thread date_time chrono regex serialization program_options)
+find_package(Boost 1.58 QUIET REQUIRED COMPONENTS system filesystem thread date_time chrono regex serialization program_options locale)
 
 set(CMAKE_FIND_LIBRARY_SUFFIXES ${OLD_LIB_SUFFIXES})
 if(NOT Boost_FOUND)
   die("Could not find Boost libraries, please make sure you have installed Boost or libboost-all-dev (1.58) or the equivalent")
 elseif(Boost_FOUND)
   message(STATUS "Found Boost Version: ${Boost_VERSION}")
-  if (Boost_VERSION VERSION_LESS 1.62 AND NOT (OPENSSL_VERSION VERSION_LESS 1.1))
+  if (Boost_VERSION VERSION_LESS 106200 AND NOT (OPENSSL_VERSION VERSION_LESS 1.1))
       message(FATAL_ERROR "Boost older than 1.62 is too old to link with OpenSSL 1.1 or newer. "
                           "Update Boost or install OpenSSL 1.0 and set path to it when running cmake: "
                           "cmake -DOPENSSL_ROOT_DIR='/usr/include/openssl-1.0;/usr/lib/openssl-1.0'")
@@ -685,7 +818,9 @@ endif()
 
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
 if(MINGW)
+  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wa,-mbig-obj")
   set(EXTRA_LIBRARIES mswsock;ws2_32;iphlpapi)
+  set(ICU_LIBRARIES ${Boost_LOCALE_LIBRARY} icuio icuin icuuc icudt icutu iconv)
 elseif(APPLE OR OPENBSD OR ANDROID)
   set(EXTRA_LIBRARIES "")
 elseif(FREEBSD)
@@ -782,11 +917,4 @@ option(BUILD_GUI_DEPS "Build GUI dependencies." OFF)
 option(INSTALL_VENDORED_LIBUNBOUND "Install libunbound binary built from source vendored with this repo." OFF)
 
 
-include(CheckCCompilerFlag)
-
 CHECK_C_COMPILER_FLAG(-std=c11 HAVE_C11)
-
-include(CheckLibraryExists)
-
-check_library_exists(c memset_s "string.h" HAVE_MEMSET_S)
-check_library_exists(c explicit_bzero "strings.h" HAVE_EXPLICIT_BZERO)

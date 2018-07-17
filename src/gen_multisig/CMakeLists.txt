@@ -1,4 +1,4 @@
-# Copyright (c) 2017, The Monero Project
+# Copyright (c) 2017-2018, The Monero Project
 #
 # All rights reserved.
 #
@@ -43,8 +43,8 @@ target_link_libraries(gen_multisig
     ${Boost_PROGRAM_OPTIONS_LIBRARY}
     ${Boost_FILESYSTEM_LIBRARY}
     ${Boost_THREAD_LIBRARY}
-    ${Readline_LIBRARY}
     ${CMAKE_THREAD_LIBS_INIT}
+    ${GNU_READLINE_LIBRARY}
     ${EXTRA_LIBRARIES})
 add_dependencies(gen_multisig
   version)
